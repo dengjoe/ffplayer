@@ -72,8 +72,8 @@ int media_input_clean(MediaInput *mediain)
 {
 	if(mediain)
 	{
-		avformat_close_input(mediain->ifmt_ctx);
 		avcodec_close(mediain->acodec_ctx);
+		avformat_close_input(&mediain->ifmt_ctx);
 	}
 
 	return 0;

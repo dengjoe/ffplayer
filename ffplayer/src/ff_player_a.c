@@ -41,9 +41,73 @@
 //Buffer:
 //|-----------|-------------|
 //chunk-------pos---len-----|
-static  uint8_t  *audio_chunk; 
-static  uint32_t  audio_len; 
-static  uint8_t  *audio_pos; 
+typedef struct audio_chunk_s
+{
+	uint8_t   *buf;
+	int           bufsize;
+
+	uint32_t   data_len;
+	uint8_t   *data;       // only pointer to buf
+}ChunkData;
+static ChunkData audio_chunk;
+
+
+int chunk_data_init(ChunkData *chunk, uint32_t *bufsize);
+void chunk_data_clean(ChunkData *chunk);
+int chunk_data_set(ChunkData *chunk, uint32_t *datasize);
+
+// init and realloc
+int chunk_data_init(ChunkData *chunk, uint32_t *bufsize)
+{
+	if(!chunk) return -1;
+
+	if(chunk->buf!=NULL)
+	{
+		if(bufsize > chunk->bufsize)
+		{
+			av_free(chunk->buf);
+			chunk->buf = NULL;
+		}
+		else
+		{
+			goto eout;
+		}
+	}
+
+	chunk->buf = (uint8_t *)av_malloc(bufsize);
+	if(!chunk->buf) return -5;
+
+	chunk->bufsize = bufsize;
+
+eout:
+	chunk->data = chunk->buf;
+	chunk->data_len = bufsize;
+	return 0;
+}
+
+int chunk_data_set(ChunkData *chunk, uint32_t *datasize)
+{
+	if(!chunk) return -1;
+	if(!chunk->buf) return -5;
+
+	chunk->data = chunk->buf;
+	chunk->data_len = datasize;
+	return 0;
+}
+
+void chunk_data_clean(ChunkData *chunk)
+{
+	if(!chunk) return;
+	if(chunk->buf) 
+	{
+		av_free(chunk->buf);
+		chunk->buf = NULL;
+		chunk->bufsize = 0;
+	}
+
+	chunk->data_len = 0;
+	chunk->data = NULL;
+}
 
 /* The audio function callback takes the following parameters: 
  * stream: A pointer to the audio buffer to be filled 
@@ -54,14 +118,14 @@ static void  audio_callback(void *udata,Uint8 *stream,int len)
 { 
 	//SDL 2.0
 	SDL_memset(stream, 0, len);
-	if(audio_len==0)		//  Only play if we have data left 
+	if(audio_chunk.data_len==0)		//  Only play if we have data left 
 			return; 
 			
-	len=(len>audio_len?audio_len:len);	// Mix  as much data as possible 
+	len=(len>audio_chunk.data_len?audio_chunk.data_len:len);	// Mix  as much data as possible 
 
-	SDL_MixAudio(stream,audio_pos,len,SDL_MIX_MAXVOLUME);
-	audio_pos += len; 
-	audio_len -= len; 
+	SDL_MixAudio(stream,audio_chunk.data,len,SDL_MIX_MAXVOLUME);
+	audio_chunk.data += len; 
+	audio_chunk.data_len -= len; 
 } 
 
 
@@ -104,48 +168,6 @@ int ff_play_audio(const char *filein)
 		printf("error in init input\n");
 		goto eout;
 	}
-	//pFormatCtx = avformat_alloc_context();
-	
-	//Open
-	//if(avformat_open_input(&pFormatCtx,filein,NULL,NULL)!=0){
-	//	printf("Couldn't open input stream.\n");
-	//	return -1;
-	//}
-
-	//if(avformat_find_stream_info(pFormatCtx, NULL)<0){
-	//	printf("Couldn't find stream information.\n");
-	//	return -1;
-	//}
-
-	//av_dump_format(pFormatCtx, 0, filein, 0);
-
-	//// Find the first audio stream
-	//audioStream=-1;
-	//for(i=0; i < pFormatCtx->nb_streams; i++)
-	//	if(pFormatCtx->streams[i]->codec->codec_type==AVMEDIA_TYPE_AUDIO){
-	//		audioStream=i;
-	//		break;
-	//	}
-
-	//if(audioStream==-1){
-	//	printf("Didn't find a audio stream.\n");
-	//	return -1;
-	//}
-
-	//// Get a pointer to the codec context for the audio stream
-	//pCodecCtx=pFormatCtx->streams[audioStream]->codec;
-
-	//// Find the decoder for the audio stream
-	//pCodec=avcodec_find_decoder(pCodecCtx->codec_id);
-	//if(pCodec==NULL){
-	//	ret =FF_ERROR_FIND_CODEC;
-	//	return -1;
-	//}
-
-	//if(avcodec_open2(pCodecCtx, pCodec,NULL)<0){
-	//	ret = FF_ERROR_OPEN_CODEC;
-	//	return -1;
-	//}
 
 
 #if OUTPUT_PCM
@@ -164,7 +186,8 @@ int ff_play_audio(const char *filein)
 
 	//Out Buffer Size
 	out_buffer_size=av_samples_get_buffer_size(NULL,out_channels ,out_nb_samples,out_sample_fmt, 1);
-	out_buffer=(uint8_t *)av_malloc(MAX_AUDIO_FRAME_SIZE*2);
+	chunk_data_init(&audio_chunk, out_buffer_size*4);
+//	out_buffer=(uint8_t *)av_malloc(MAX_AUDIO_FRAME_SIZE*2);
 
 	pFrame=avcodec_alloc_frame();
 	
@@ -217,7 +240,7 @@ int ff_play_audio(const char *filein)
 
 			if ( got_picture > 0 )
 			{
-				swr_convert(au_convert_ctx,&out_buffer, MAX_AUDIO_FRAME_SIZE,
+				swr_convert(au_convert_ctx,&audio_chunk.buf, audio_chunk.bufsize,
 					(const uint8_t **)pFrame->data , pFrame->nb_samples);
 
 				printf("index:%5d\t pts:%10d\t packet size:%d\n",index,packet->pts,packet->size);
@@ -228,6 +251,7 @@ int ff_play_audio(const char *filein)
 					SDL_CloseAudio();
 					out_nb_samples = pFrame->nb_samples;
 					out_buffer_size = av_samples_get_buffer_size(NULL,out_channels ,out_nb_samples,out_sample_fmt, 1);
+
 					wanted_spec.samples = out_nb_samples;
 					SDL_OpenAudio(&wanted_spec, NULL);
 				}
@@ -241,13 +265,11 @@ int ff_play_audio(const char *filein)
 //SDL------------------
 #if USE_SDL
 			//Set audio buffer (PCM data)
-			audio_chunk = (Uint8 *) out_buffer; 
-			audio_len =out_buffer_size; //Audio buffer length
-			audio_pos = audio_chunk;
+			chunk_data_set(&audio_chunk, out_buffer_size);
 			//Play
 			SDL_PauseAudio(0);
-			while(audio_len>0)//Wait until finish
-				SDL_Delay(1); 
+			while(audio_chunk.data_len>0)
+				SDL_Delay(1);  //Wait until finish
 #endif
 		}
 		av_free_packet(packet);
@@ -271,6 +293,7 @@ eout:
 		out_buffer = NULL;
 	}
 	media_input_clean(&mediain);
+	chunk_data_clean(&audio_chunk);
 	return 0;
 }
 

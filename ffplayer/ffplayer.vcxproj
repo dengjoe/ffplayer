@@ -16,11 +16,13 @@
     <ClCompile Include="src\ff_player_a.c" />
     <ClCompile Include="src\ff_player_av0.c" />
     <ClCompile Include="src\ff_player_su.c" />
+    <ClCompile Include="src\media_chunk.c" />
     <ClCompile Include="src\media_input.c" />
     <ClCompile Include="src\packet_queue.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\ff_player.h" />
+    <ClInclude Include="src\media_chunk.h" />
     <ClInclude Include="src\media_input.h" />
     <ClInclude Include="src\packet_queue.h" />
   </ItemGroup>

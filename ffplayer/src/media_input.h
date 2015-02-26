@@ -15,15 +15,20 @@ typedef struct media_input_s
 	AVFormatContext *ifmt_ctx;
 
 	// audio
-	AVCodecContext	*acodec_ctx;
-	AVCodec			*acodec;
+	AVCodecContext  *acodec_ctx;
+	AVCodec			  *acodec;
 	int		astream_index;
+
+	// video
+	AVCodecContext  *vcodec_ctx;
+	AVCodec			  *vcodec;
+	int		vstream_index;
 
 } MediaInput;
 
 
-int media_input_init(MediaInput *mediain, const char *filein);
-int media_input_clean(MediaInput *mediain);
+MediaInput *media_input_init(const char *filein, int *error);
+void media_input_clean(MediaInput *mediain);
 
 
 

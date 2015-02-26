@@ -29,6 +29,7 @@
 #include "SDL_thread.h"
 
 #include "media_input.h"
+#include "media_chunk.h"
 
 #define MAX_AUDIO_FRAME_SIZE 192000 // 1 second of 48khz 32bit audio
 
@@ -38,114 +39,44 @@
 //Use SDL
 #define USE_SDL 1
 
-//Buffer:
-//|-----------|-------------|
-//chunk-------pos---len-----|
-typedef struct audio_chunk_s
-{
-	uint8_t   *buf;
-	int           bufsize;
-
-	uint32_t   data_len;
-	uint8_t   *data;       // only pointer to buf
-}ChunkData;
-static ChunkData audio_chunk;
+static ChunkData *audio_chunk = NULL;
 
 
-int chunk_data_init(ChunkData *chunk, uint32_t *bufsize);
-void chunk_data_clean(ChunkData *chunk);
-int chunk_data_set(ChunkData *chunk, uint32_t *datasize);
-
-// init and realloc
-int chunk_data_init(ChunkData *chunk, uint32_t *bufsize)
-{
-	if(!chunk) return -1;
-
-	if(chunk->buf!=NULL)
-	{
-		if(bufsize > chunk->bufsize)
-		{
-			av_free(chunk->buf);
-			chunk->buf = NULL;
-		}
-		else
-		{
-			goto eout;
-		}
-	}
-
-	chunk->buf = (uint8_t *)av_malloc(bufsize);
-	if(!chunk->buf) return -5;
-
-	chunk->bufsize = bufsize;
-
-eout:
-	chunk->data = chunk->buf;
-	chunk->data_len = bufsize;
-	return 0;
-}
-
-int chunk_data_set(ChunkData *chunk, uint32_t *datasize)
-{
-	if(!chunk) return -1;
-	if(!chunk->buf) return -5;
-
-	chunk->data = chunk->buf;
-	chunk->data_len = datasize;
-	return 0;
-}
-
-void chunk_data_clean(ChunkData *chunk)
-{
-	if(!chunk) return;
-	if(chunk->buf) 
-	{
-		av_free(chunk->buf);
-		chunk->buf = NULL;
-		chunk->bufsize = 0;
-	}
-
-	chunk->data_len = 0;
-	chunk->data = NULL;
-}
 
 /* The audio function callback takes the following parameters: 
  * stream: A pointer to the audio buffer to be filled 
  * len: The length (in bytes) of the audio buffer 
- * »Øµ÷º¯Êý
 */ 
-static void  audio_callback(void *udata,Uint8 *stream,int len)
+static void  audio_callback(void *udata,uint8_t *stream,int len)
 { 
 	//SDL 2.0
 	SDL_memset(stream, 0, len);
-	if(audio_chunk.data_len==0)		//  Only play if we have data left 
+	if(audio_chunk->data_len==0)		//  Only play if we have data left 
 			return; 
 			
-	len=(len>audio_chunk.data_len?audio_chunk.data_len:len);	// Mix  as much data as possible 
+	len=(len>audio_chunk->data_len?audio_chunk->data_len:len);	// Mix  as much data as possible 
 
-	SDL_MixAudio(stream,audio_chunk.data,len,SDL_MIX_MAXVOLUME);
-	audio_chunk.data += len; 
-	audio_chunk.data_len -= len; 
+	SDL_MixAudio(stream,audio_chunk->data,len,SDL_MIX_MAXVOLUME);
+	audio_chunk->data += len; 
+	audio_chunk->data_len -= len; 
 } 
 
 
 int ff_play_audio(const char *filein)
 {
-	int		i;
-	FILE *pFile=NULL;
-
+	FILE *pfile=NULL;
 	AVPacket *packet=NULL;
 
 	//Out Audio Param
 	enum AVSampleFormat out_sample_fmt=0;
 	uint64_t out_channel_layout=0;
-	int         out_nb_samples=1024;
-	int         out_sample_rate=44100;
+	int         out_nb_samples=0;
+	int         out_sample_rate=0;
 	int         out_channels = 0;
 
 	//Out Buffer Size
 	uint8_t *out_buffer= NULL;
-	int                  out_buffer_size =0;
+	int        out_buffer_size =0;
 	AVFrame	*pFrame;
 
 	SDL_AudioSpec wanted_spec;
@@ -157,39 +88,44 @@ int ff_play_audio(const char *filein)
 	int64_t in_channel_layout = 0;
 	struct SwrContext *au_convert_ctx;
 
-	MediaInput mediain;
+	MediaInput *mediain = NULL;
+	int err = 0;
 
 	av_register_all();
 	avformat_network_init();
 
-	ret = media_input_init(&mediain, filein);
-	if(ret < 0) 
+	mediain = media_input_init(filein, &err);
+	if(mediain == 0) 
 	{
-		printf("error in init input\n");
+		printf("error in init input, error=%d\n", err);
 		goto eout;
 	}
 
 
 #if OUTPUT_PCM
-	pFile=fopen("output.pcm", "wb");
+	pfile=fopen("output.pcm", "wb");
 #endif
 
-	packet=(AVPacket *)malloc(sizeof(AVPacket));
+	packet=(AVPacket *)av_malloc(sizeof(AVPacket));
 	av_init_packet(packet);
 
 	//Out Audio Param
 	out_channel_layout=AV_CH_LAYOUT_STEREO;
-	out_nb_samples=1024;
+	out_nb_samples=1024; 
 	out_sample_fmt=AV_SAMPLE_FMT_S16;
 	out_sample_rate=44100;
 	out_channels=av_get_channel_layout_nb_channels(out_channel_layout);
 
 	//Out Buffer Size
 	out_buffer_size=av_samples_get_buffer_size(NULL,out_channels ,out_nb_samples,out_sample_fmt, 1);
-	chunk_data_init(&audio_chunk, out_buffer_size*4);
-//	out_buffer=(uint8_t *)av_malloc(MAX_AUDIO_FRAME_SIZE*2);
+	audio_chunk = chunk_data_init(out_buffer_size*4, &err);
+	if(!audio_chunk)
+	{
+		printf("error in chunk_data_init, error=%d\n", err);
+		goto eout;
+	}
 
-	pFrame=avcodec_alloc_frame();
+	pFrame=av_frame_alloc();
 	
 //SDL------------------
 #if USE_SDL
@@ -199,13 +135,13 @@ int ff_play_audio(const char *filein)
 		return -1;
 	}
 
-	wanted_spec.freq = mediain.acodec_ctx->sample_rate; //out_sample_rate; 
+	wanted_spec.freq = mediain->acodec_ctx->sample_rate; //out_sample_rate; 
 	wanted_spec.format = AUDIO_S16SYS; 
-	wanted_spec.channels = mediain.acodec_ctx->channels; 
+	wanted_spec.channels = mediain->acodec_ctx->channels; 
 	wanted_spec.silence = 0; 
-	wanted_spec.samples = out_nb_samples; 
+	wanted_spec.samples = out_nb_samples; // Audio buffer size in samples (power of 2)
 	wanted_spec.callback = audio_callback; 
-	wanted_spec.userdata = mediain.acodec_ctx; 
+	wanted_spec.userdata = mediain->acodec_ctx; 
 
 	if (SDL_OpenAudio(&wanted_spec, NULL)<0)
 	{ 
@@ -214,25 +150,23 @@ int ff_play_audio(const char *filein)
 	} 
 #endif
 
-	printf("Bitrate:\t %3d\n", mediain.ifmt_ctx->bit_rate);
-	printf("Decoder Name:\t %s\n", mediain.acodec_ctx->codec->long_name);
-	printf("Channels:\t %d\n", mediain.acodec_ctx->channels);
-	printf("Sample per Second\t %d \n", mediain.acodec_ctx->sample_rate);
+	printf("Bitrate:\t %3d\n",          mediain->ifmt_ctx->bit_rate);
+	printf("Decoder Name:\t %s\n", mediain->acodec_ctx->codec->long_name);
+	printf("Channels:\t %d\n",         mediain->acodec_ctx->channels);
+	printf("Sample per Second\t %d \n", mediain->acodec_ctx->sample_rate);
 
 	//FIX:Some Codec's Context Information is missing
-	in_channel_layout=av_get_default_channel_layout(mediain.acodec_ctx->channels);
-
+	in_channel_layout=av_get_default_channel_layout(mediain->acodec_ctx->channels);
 	au_convert_ctx = swr_alloc();
 	au_convert_ctx=swr_alloc_set_opts(au_convert_ctx,out_channel_layout, out_sample_fmt, out_sample_rate,
-		in_channel_layout,mediain.acodec_ctx->sample_fmt , mediain.acodec_ctx->sample_rate,0, NULL);
-
+		in_channel_layout,mediain->acodec_ctx->sample_fmt , mediain->acodec_ctx->sample_rate,0, NULL);
 	swr_init(au_convert_ctx);
 
-	while(av_read_frame(mediain.ifmt_ctx, packet)>=0)
+	while(av_read_frame(mediain->ifmt_ctx, packet)>=0)
 	{
-		if(packet->stream_index==mediain.astream_index)
+		if(packet->stream_index==mediain->astream_index)
 		{
-			ret = avcodec_decode_audio4( mediain.acodec_ctx, pFrame,&got_picture, packet);
+			ret = avcodec_decode_audio4( mediain->acodec_ctx, pFrame,&got_picture, packet);
 			if ( ret < 0 ) {
                 printf("Error in decoding audio frame.\n");
                 return -1;
@@ -240,7 +174,7 @@ int ff_play_audio(const char *filein)
 
 			if ( got_picture > 0 )
 			{
-				swr_convert(au_convert_ctx,&audio_chunk.buf, audio_chunk.bufsize,
+				swr_convert(au_convert_ctx,&audio_chunk->buf, audio_chunk->bufsize,
 					(const uint8_t **)pFrame->data , pFrame->nb_samples);
 
 				printf("index:%5d\t pts:%10d\t packet size:%d\n",index,packet->pts,packet->size);
@@ -257,18 +191,17 @@ int ff_play_audio(const char *filein)
 				}
 
 #if OUTPUT_PCM
-				fwrite(out_buffer, 1, out_buffer_size, pFile);//Write PCM
+				fwrite(out_buffer, 1, out_buffer_size, pfile);//Write PCM
 #endif
 				
 				index++;
 			}
 //SDL------------------
 #if USE_SDL
-			//Set audio buffer (PCM data)
-			chunk_data_set(&audio_chunk, out_buffer_size);
+			chunk_data_reset(audio_chunk, out_buffer_size);//Set audio buffer (PCM data)
 			//Play
 			SDL_PauseAudio(0);
-			while(audio_chunk.data_len>0)
+			while(audio_chunk->data_len>0)
 				SDL_Delay(1);  //Wait until finish
 #endif
 		}
@@ -283,7 +216,7 @@ int ff_play_audio(const char *filein)
 #endif
 
 #if OUTPUT_PCM
-	fclose(pFile);
+	fclose(pfile);
 #endif
 
 eout:
@@ -292,8 +225,8 @@ eout:
 		av_free(out_buffer);
 		out_buffer = NULL;
 	}
-	media_input_clean(&mediain);
-	chunk_data_clean(&audio_chunk);
+	media_input_clean(mediain);
+	chunk_data_clean(audio_chunk);
 	return 0;
 }
 

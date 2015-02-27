@@ -94,7 +94,7 @@ static void audio_callback(void *userdata, Uint8 *stream, int len)
 	static unsigned int audio_buf_size = 0;
 	static unsigned int audio_buf_index = 0;
 
-	while(len > 0)
+	while(len > 0) //want to fill len 
 	{
 		if(audio_buf_index >= audio_buf_size) 
 		{
@@ -122,6 +122,8 @@ static void audio_callback(void *userdata, Uint8 *stream, int len)
 		stream += len1;
 		audio_buf_index += len1;
 	}
+
+	return;
 }
 
 int ff_play_media_av0(const char *filein)

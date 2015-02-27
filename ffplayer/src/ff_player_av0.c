@@ -270,8 +270,7 @@ int ff_play_media_av0(const char *filein)
 		// Is this a packet from the video stream?
 		if(packet.stream_index==videoStream) {
 			// Decode video frame
-			avcodec_decode_video2(pCodecCtx, pFrame, &frameFinished, 
-				&packet);
+			avcodec_decode_video2(pCodecCtx, pFrame, &frameFinished, &packet);
 
 			// Did we get a video frame?
 			if(frameFinished) 
@@ -331,7 +330,8 @@ int ff_play_media_av0(const char *filein)
 	}
 
 	// Free the YUV frame
-	av_free(pFrame);
+	//av_free(pFrame);
+	av_frame_free(&pFrame);
 	av_frame_free(&pFrameYUV);
 
 	avcodec_close(pCodecCtx);

@@ -47,7 +47,7 @@ static ChunkData *audio_chunk = NULL;
  * stream: A pointer to the audio buffer to be filled 
  * len: The length (in bytes) of the audio buffer 
 */ 
-static void  audio_callback(void *udata,uint8_t *stream,int len)
+static void  audio_callback(void *udata, Uint8 *stream, int len)
 { 
 	//SDL 2.0
 	SDL_memset(stream, 0, len);

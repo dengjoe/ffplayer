@@ -65,7 +65,7 @@ static void  audio_callback(void *udata,uint8_t *stream,int len)
 int ff_play_audio(const char *filein)
 {
 	FILE *pfile=NULL;
-	AVPacket *packet=NULL;
+	AVPacket packet;
 
 	//Out Audio Param
 	enum AVSampleFormat out_sample_fmt=0;
@@ -105,9 +105,6 @@ int ff_play_audio(const char *filein)
 #if OUTPUT_PCM
 	pfile=fopen("output.pcm", "wb");
 #endif
-
-	packet=(AVPacket *)av_malloc(sizeof(AVPacket));
-	av_init_packet(packet);
 
 	//Out Audio Param
 	out_channel_layout=AV_CH_LAYOUT_STEREO;
@@ -162,11 +159,11 @@ int ff_play_audio(const char *filein)
 		in_channel_layout,mediain->acodec_ctx->sample_fmt , mediain->acodec_ctx->sample_rate,0, NULL);
 	swr_init(au_convert_ctx);
 
-	while(av_read_frame(mediain->ifmt_ctx, packet)>=0)
+	while(av_read_frame(mediain->ifmt_ctx, &packet)>=0)
 	{
-		if(packet->stream_index==mediain->astream_index)
+		if(packet.stream_index==mediain->astream_index)
 		{
-			ret = avcodec_decode_audio4( mediain->acodec_ctx, pFrame,&got_picture, packet);
+			ret = avcodec_decode_audio4( mediain->acodec_ctx, pFrame,&got_picture, &packet);
 			if ( ret < 0 ) {
                 printf("Error in decoding audio frame.\n");
                 return -1;
@@ -177,7 +174,7 @@ int ff_play_audio(const char *filein)
 				swr_convert(au_convert_ctx,&audio_chunk->buf, audio_chunk->bufsize,
 					(const uint8_t **)pFrame->data , pFrame->nb_samples);
 
-				printf("index:%5d\t pts:%10d\t packet size:%d\n",index,packet->pts,packet->size);
+				printf("index:%5d\t pts:%10d\t packet size:%d\n", index, packet.pts, packet.size);
 
 				//FIX:FLAC,MP3,AAC Different number of samples
 				if(wanted_spec.samples!=pFrame->nb_samples)
@@ -190,22 +187,23 @@ int ff_play_audio(const char *filein)
 					SDL_OpenAudio(&wanted_spec, NULL);
 				}
 
+				//SDL------------------
+#if USE_SDL
+				chunk_data_reset(audio_chunk, out_buffer_size);//Set audio buffer (PCM data)
+				
+				SDL_PauseAudio(0); //Play
+				while(audio_chunk->data_len>0)
+					SDL_Delay(1);  //Wait until finish
+#endif				
+
 #if OUTPUT_PCM
 				fwrite(out_buffer, 1, out_buffer_size, pfile);//Write PCM
-#endif
-				
+#endif	
 				index++;
 			}
-//SDL------------------
-#if USE_SDL
-			chunk_data_reset(audio_chunk, out_buffer_size);//Set audio buffer (PCM data)
-			//Play
-			SDL_PauseAudio(0);
-			while(audio_chunk->data_len>0)
-				SDL_Delay(1);  //Wait until finish
-#endif
+
 		}
-		av_free_packet(packet);
+		av_free_packet(&packet);
 	}
 
 	swr_free(&au_convert_ctx);
@@ -220,6 +218,7 @@ int ff_play_audio(const char *filein)
 #endif
 
 eout:
+	av_frame_free(&pFrame);
 	if(out_buffer)
 	{
 		av_free(out_buffer);

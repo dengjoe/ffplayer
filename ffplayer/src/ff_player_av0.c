@@ -13,6 +13,8 @@
 #include "libavformat/avformat.h"
 #include "libavutil/avutil.h"
 #include "libswscale/swscale.h"
+#include "libswresample/swresample.h"
+#include "libavutil/samplefmt.h"
 
 #include "SDL.h"
 #include "SDL_thread.h"
@@ -33,7 +35,22 @@
 PacketQueue audioq;
 int quit = 0;
 
+static SwrContext * init_swr_context(AVCodecContext *acodec_ctx, uint64_t out_channel_layout, enum AVSampleFormat out_sample_fmt)
+{
+	SwrContext *swr_ctx = NULL;
+	int out_sample_rate = 44100;
+	int64_t in_channel_layout = 0;
 
+	if(!acodec_ctx) return NULL;
+
+	in_channel_layout=av_get_default_channel_layout(acodec_ctx->channels);
+	swr_ctx = swr_alloc();
+	swr_ctx=swr_alloc_set_opts(swr_ctx, out_channel_layout, out_sample_fmt, out_sample_rate,
+		in_channel_layout, acodec_ctx->sample_fmt , acodec_ctx->sample_rate, 0, NULL);
+	swr_init(swr_ctx);
+
+	return swr_ctx;
+}
 
 int audio_decode_frame(AVCodecContext *aCodecCtx, uint8_t *audio_buf, int buf_size) 
 {
@@ -94,7 +111,7 @@ static void audio_callback(void *userdata, Uint8 *stream, int len)
 	static unsigned int audio_buf_size = 0;
 	static unsigned int audio_buf_index = 0;
 
-	while(len > 0) //want to fill len 
+	while(len > 0) //want to fill all len 
 	{
 		if(audio_buf_index >= audio_buf_size) 
 		{
@@ -126,17 +143,87 @@ static void audio_callback(void *userdata, Uint8 *stream, int len)
 	return;
 }
 
+static void audio_callback2(void *userdata, Uint8 *stream, int len) 
+{
+	int ret = 0;
+	MediaInput *mediain = (MediaInput *)userdata;
+	AVCodecContext *acodec_ctx = NULL;
+	struct SwrContext   *swr_ctx = NULL;
+
+	static AVPacket packet;
+	static AVFrame frame;
+	static int got_frame = 0;
+
+	static uint8_t audio_buf[(MAX_AUDIO_FRAME_SIZE * 3) / 2];
+	static unsigned int audio_buf_size = 0;
+	static int index = 0;
+	static int out_buffer_size = 0;
+
+	if(!mediain) return;
+	if(!mediain->acodec_ctx) return;
+	if(!mediain->swr_ctx) return;
+
+	acodec_ctx = mediain->acodec_ctx;
+	swr_ctx = mediain->swr_ctx;
+
+	for(;;)
+	{
+		if(packet_queue_get(&audioq, &packet, 1) < 0) 
+			break;
+
+		ret = avcodec_decode_audio4( mediain->acodec_ctx, &frame, &got_frame, &packet);
+		if ( ret < 0 ) 
+		{
+			printf("Error in decoding audio frame.\n");
+			break;
+		}
+
+		if ( got_frame > 0 )
+		{
+			swr_convert(swr_ctx, &audio_buf, audio_buf_size, (const uint8_t **)frame.data , frame.nb_samples);
+
+			printf("index:%5d\t pts=%10d,\t packet size:%d\n", index, packet.pts, packet.size);
+
+			////FIX:FLAC,MP3,AAC Different number of samples
+			//if(mediain->a_spec.samples!=frame.nb_samples)
+			//{
+			//	SDL_CloseAudio();
+			//	mediain->out_buffer_size = av_samples_get_buffer_size(NULL,mediain->out_channels ,frame.nb_samples,mediain->out_sample_fmt, 1);
+
+			//	mediain->a_spec.samples = frame.nb_samples;
+			//	SDL_OpenAudio(&mediain->a_spec, NULL);
+			//	SDL_PauseAudio(0); //Play
+			//}
+
+			//push mem
+			SDL_memset(stream, 0, len);
+			len=(len>mediain->out_buffer_size ? mediain->out_buffer_size:len);	// get min value.Mix  as much data as possible 
+
+			SDL_MixAudio(stream, audio_buf, len, SDL_MIX_MAXVOLUME);
+
+			index++;
+			av_free_packet(&packet);
+			return;
+		}
+
+		av_free_packet(&packet);
+	}
+
+	return;
+}
+
 int ff_play_media_av0(const char *filein)
 {
 	MediaInput *mediain = NULL;
 	int   err = 0;
 	int   ret = 0;
 	int   i;
-	
+
+	uint8_t  *out_buffer = NULL;
 	AVPacket   packet;
 	AVFrame   *pFrame = NULL; 
 	AVFrame	 *pFrameYUV = NULL;
-	uint8_t       *out_buffer = NULL;
+
 	int             got_frame = 0;
 
 	SDL_Window *screen = NULL; 
@@ -150,6 +237,15 @@ int ff_play_media_av0(const char *filein)
 	struct SwsContext   *sws_ctx            = NULL;
 	AVDictionary        *videoOptionsDict   = NULL;
 	AVDictionary        *audioOptionsDict   = NULL;
+
+	// audio out param==
+	enum AVSampleFormat aout_sample_fmt=0;
+	uint64_t aout_channel_layout=0;
+	int      aout_channels  = 0;
+	int      aout_nb_samples=0;
+	uint8_t *aout_buffer= NULL;
+	int      aout_buffer_size =0;
+	//===
 
 	if(!filein) return -1;
 
@@ -169,20 +265,38 @@ int ff_play_media_av0(const char *filein)
 	}
 
 	// init audio
+
 	// Set audio settings from codec info
 	wanted_spec.freq = mediain->acodec_ctx->sample_rate;
 	wanted_spec.format = AUDIO_S16SYS;
 	wanted_spec.channels = mediain->acodec_ctx->channels;
 	wanted_spec.silence = 0;
 	wanted_spec.samples = SDL_AUDIO_BUFFER_SIZE;
-	wanted_spec.callback = audio_callback;
-	wanted_spec.userdata = mediain->acodec_ctx;
+	//wanted_spec.callback = audio_callback;
+	//wanted_spec.userdata = mediain->acodec_ctx;
+	wanted_spec.callback = audio_callback2;
+	wanted_spec.userdata = mediain;
 
 	if(SDL_OpenAudio(&wanted_spec, &spec) < 0) 
 	{
 		fprintf(stderr, "SDL_OpenAudio: %s\n", SDL_GetError());
 		goto eout;
 	}
+
+	//Out Audio Param===
+	aout_channel_layout=AV_CH_LAYOUT_STEREO;
+	aout_nb_samples=1024; 
+	aout_sample_fmt=AV_SAMPLE_FMT_S16;
+	aout_channels=av_get_channel_layout_nb_channels(aout_channel_layout);
+	aout_buffer_size=av_samples_get_buffer_size(NULL,aout_channels ,aout_nb_samples,aout_sample_fmt, 1);
+
+	mediain->swr_ctx = init_swr_context(mediain->acodec_ctx, aout_channel_layout, aout_sample_fmt);
+	if(!mediain->swr_ctx) {printf("init_swr_context error.\n"); goto eout;}
+	mediain->a_spec = wanted_spec;
+	mediain->out_channels = aout_channels;
+	mediain->out_sample_fmt = aout_sample_fmt;
+	mediain->out_buffer_size = aout_buffer_size;
+	//===
 
 	packet_queue_init(&audioq);
 	SDL_PauseAudio(0);
@@ -217,6 +331,7 @@ int ff_play_media_av0(const char *filein)
 	sws_ctx = sws_getContext( mediain->vcodec_ctx->width, mediain->vcodec_ctx->height, mediain->vcodec_ctx->pix_fmt,
 		mediain->vcodec_ctx->width, mediain->vcodec_ctx->height, PIX_FMT_YUV420P, 
 		SWS_BILINEAR, NULL, NULL, NULL );
+
 
 	i=0;
 	while(av_read_frame(mediain->ifmt_ctx, &packet)>=0) 

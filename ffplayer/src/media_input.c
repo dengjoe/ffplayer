@@ -1,5 +1,6 @@
 #include "media_input.h"
 #include "media_defs.h"
+#include "libswresample/swresample.h"
 
 int media_init_codec(MediaInput *mediain, int stream_index, int mediatype);
 
@@ -86,6 +87,11 @@ void media_input_clean(MediaInput *mediain)
 		{
 			avformat_close_input(&mediain->ifmt_ctx);
 			mediain->ifmt_ctx = NULL;
+		}
+
+		if(mediain->swr_ctx) 
+		{
+			swr_free(&mediain->swr_ctx);
 		}
 
 		free(mediain);

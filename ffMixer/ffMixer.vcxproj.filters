@@ -27,12 +27,18 @@
     <ClCompile Include="src\media_input.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\ffFormat.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\ffMixer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\media_input.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ffFormat.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

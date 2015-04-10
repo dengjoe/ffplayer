@@ -84,6 +84,7 @@
     <ClCompile Include="main.c">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="src\ffFormat.c" />
     <ClCompile Include="src\ffMixer.c">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -92,6 +93,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\ffFormat.h" />
     <ClInclude Include="src\ffMixer.h" />
     <ClInclude Include="src\media_input.h" />
   </ItemGroup>

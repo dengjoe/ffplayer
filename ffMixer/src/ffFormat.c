@@ -25,13 +25,20 @@
 #include "SDL_thread.h"
 
 
-#define INPUT_SAMPLERATE     48000
-#define INPUT_FORMAT         AV_SAMPLE_FMT_FLTP
-#define INPUT_CHANNEL_LAYOUT AV_CH_LAYOUT_5POINT0
+//#define INPUT_SAMPLERATE     48000
+//#define INPUT_FORMAT         AV_SAMPLE_FMT_FLTP  //AV_SAMPLE_FMT_S16
+//#define INPUT_CHANNEL_LAYOUT AV_CH_LAYOUT_5POINT0
 #define VOLUME_VAL 0.90
 
+typedef struct audio_param_s{
+	enum AVSampleFormat sample_fmt;
+	int sample_rate;
+	int channel_layout;
+	AVRational time_base;
+}audio_param_t;
 
-int init_format_filter_graph(AVFilterGraph **graph, AVFilterContext **src, AVFilterContext **sink);
+int init_format_filter_graph(AVFilterGraph **graph, AVFilterContext **src, AVFilterContext **sink,
+						audio_param_t *src_param, audio_param_t *dst_param);
 
 
 int ff_format_audio(const char *filein, const char* fileout)
@@ -43,6 +50,8 @@ int ff_format_audio(const char *filein, const char* fileout)
 	AVPacket packet;
 	AVFrame *frame = NULL;
 	MediaInput *media_in = NULL;
+	audio_param_t src_param;
+	audio_param_t dst_param;
 
 	uint8_t errstr[1024];
 	int ret = 0;
@@ -52,15 +61,28 @@ int ff_format_audio(const char *filein, const char* fileout)
 	av_register_all();
 	avfilter_register_all();
 
-	ret = init_format_filter_graph(&graph, &src, &sink);
-	if (ret < 0) {
-		fprintf(stderr, "Unable to init filter graph:");
-		goto failout;
-	}
 
 	media_in = media_input_init(filein, &ret);
 	if(!media_in){
 		fprintf(stderr, "Unable to open input file!");
+		goto failout;
+	}
+
+	src_param.channel_layout = media_in->acodec_ctx->channel_layout;
+	src_param.sample_fmt = media_in->acodec_ctx->sample_fmt;
+	src_param.sample_rate = media_in->acodec_ctx->sample_rate;
+	src_param.time_base.num = 1;
+	src_param.time_base.den = src_param.sample_rate;
+
+	dst_param.channel_layout = AV_CH_LAYOUT_STEREO;
+	dst_param.sample_fmt = AV_SAMPLE_FMT_S16;
+	dst_param.sample_rate = 48000;
+	dst_param.time_base.num = 1;
+	dst_param.time_base.den = dst_param.sample_rate;
+
+	ret = init_format_filter_graph(&graph, &src, &sink, &src_param, &dst_param);
+	if (ret < 0) {
+		fprintf(stderr, "Unable to init filter graph:");
 		goto failout;
 	}
 
@@ -120,7 +142,8 @@ failout:
 }
 
 
-static int init_format_filter_graph(AVFilterGraph **graph, AVFilterContext **src, AVFilterContext **sink)
+static int init_format_filter_graph(AVFilterGraph **graph, AVFilterContext **src, AVFilterContext **sink,
+					audio_param_t *src_param, audio_param_t *dst_param)
 {
     AVFilterGraph *filter_graph;
     AVFilterContext *abuffer_ctx;
@@ -134,7 +157,6 @@ static int init_format_filter_graph(AVFilterGraph **graph, AVFilterContext **src
     char options_str[1024];
     uint8_t ch_layout[64];
 
-	AVRational tm_base = {1, INPUT_SAMPLERATE};
     int err;
 
     // Create a new filtergraph
@@ -158,11 +180,11 @@ static int init_format_filter_graph(AVFilterGraph **graph, AVFilterContext **src
     }
 
     /* Set the filter options through the AVOptions API. */
-    av_get_channel_layout_string(ch_layout, sizeof(ch_layout), 0, INPUT_CHANNEL_LAYOUT);
+    av_get_channel_layout_string(ch_layout, sizeof(ch_layout), 0, src_param->channel_layout);
     av_opt_set    (abuffer_ctx, "channel_layout", ch_layout,     AV_OPT_SEARCH_CHILDREN);
-    av_opt_set    (abuffer_ctx, "sample_fmt",     av_get_sample_fmt_name(INPUT_FORMAT), AV_OPT_SEARCH_CHILDREN);
-    av_opt_set_q  (abuffer_ctx, "time_base",      tm_base,  AV_OPT_SEARCH_CHILDREN);
-    av_opt_set_int(abuffer_ctx, "sample_rate",    INPUT_SAMPLERATE,  AV_OPT_SEARCH_CHILDREN);
+    av_opt_set    (abuffer_ctx, "sample_fmt",     av_get_sample_fmt_name(src_param->sample_fmt), AV_OPT_SEARCH_CHILDREN);
+    av_opt_set_q  (abuffer_ctx, "time_base",      src_param->time_base,  AV_OPT_SEARCH_CHILDREN);
+    av_opt_set_int(abuffer_ctx, "sample_rate",    src_param->sample_rate,  AV_OPT_SEARCH_CHILDREN);
 
     /* Now initialize the filter; we pass NULL options, since we have already  set all the options above. */
     err = avfilter_init_str(abuffer_ctx, NULL);
@@ -184,11 +206,11 @@ static int init_format_filter_graph(AVFilterGraph **graph, AVFilterContext **src
         return AVERROR(ENOMEM);
     }
 
-    /* A third way of passing the options is in a string of the form
+    /* A third way of passing the options is in a string of the form 
      * key1=value1:key2=value2.... */
     sprintf(options_str, "sample_fmts=%s:sample_rates=%d:channel_layouts=0x%"PRIx64,
-             av_get_sample_fmt_name(AV_SAMPLE_FMT_S16), 44100,
-             (uint64_t)AV_CH_LAYOUT_STEREO);
+             av_get_sample_fmt_name(dst_param->sample_fmt), dst_param->sample_rate,
+             (uint64_t)dst_param->channel_layout);
     err = avfilter_init_str(aformat_ctx, options_str);
     if (err < 0) {
         av_log(NULL, AV_LOG_ERROR, "Could not initialize the aformat filter.\n");

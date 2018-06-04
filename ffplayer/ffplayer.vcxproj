@@ -67,13 +67,13 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>../ffmpeg/include;../sdl/include;./src</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../sdk/include;../sdk/include/sdl;./src</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <OutputFile>../bin/$(TargetName)$(TargetExt)</OutputFile>
-      <AdditionalLibraryDirectories>../ffmpeg/lib_win32;../sdl/lib_win32</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>../sdk/lib</AdditionalLibraryDirectories>
       <AdditionalDependencies>swresample.lib;sdl2.lib;swscale.lib;avformat.lib;avcodec.lib;avutil.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
